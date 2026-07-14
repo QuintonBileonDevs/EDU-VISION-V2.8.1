@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDbPool, initializeDatabase, sha256, detectUsersSchema } from "@/lib/db";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
@@ -133,6 +135,94 @@ export async function GET(req: NextRequest) {
 
     const [rows]: any = await db.query(query, selectParams);
 
+    // Fetch all role permissions
+    const rolePermsMap: Record<string, string[]> = {};
+    try {
+      let rolePermsQuery = "";
+      if (schema === "legacy") {
+        rolePermsQuery = `
+          SELECT r.role_name AS role, p.permission_name
+          FROM \`role_permissions\` rp
+          JOIN \`permissions\` p ON rp.permission_id = p.permission_id
+          JOIN \`roles\` r ON rp.role_id = r.role_id
+          WHERE rp.deleted_at IS NULL AND p.deleted_at IS NULL
+        `;
+      } else {
+        rolePermsQuery = `
+          SELECT rp.role, p.permission_name
+          FROM \`role_permissions\` rp
+          JOIN \`permissions\` p ON rp.permission_id = p.permission_id
+          WHERE rp.deleted_at IS NULL AND p.deleted_at IS NULL
+        `;
+      }
+      const [rolePermRows]: any = await db.query(rolePermsQuery);
+      rolePermRows.forEach((rp: any) => {
+        const rName = rp.role;
+        if (!rolePermsMap[rName]) {
+          rolePermsMap[rName] = [];
+        }
+        rolePermsMap[rName].push(rp.permission_name);
+      });
+    } catch (rpErr) {
+      console.error("Error fetching all role permissions:", rpErr);
+    }
+
+    // Fetch overrides for the returned users
+    const userOverridesMap: Record<number, { allow: string[], deny: string[] }> = {};
+    if (rows.length > 0) {
+      try {
+        const userIds = rows.map((r: any) => r.id);
+        const [overrideRows]: any = await db.query(`
+          SELECT up.user_id, p.permission_name, up.override_type
+          FROM \`user_permissions\` up
+          JOIN \`permissions\` p ON up.permission_id = p.permission_id
+          WHERE up.user_id IN (?) AND up.deleted_at IS NULL AND p.deleted_at IS NULL
+        `, [userIds]);
+
+        overrideRows.forEach((row: any) => {
+          const uId = row.user_id;
+          if (!userOverridesMap[uId]) {
+            userOverridesMap[uId] = { allow: [], deny: [] };
+          }
+          if (row.override_type === "allow") {
+            userOverridesMap[uId].allow.push(row.permission_name);
+          } else if (row.override_type === "deny") {
+            userOverridesMap[uId].deny.push(row.permission_name);
+          }
+        });
+      } catch (overErr) {
+        console.error("Error fetching user permissions overrides in bulk:", overErr);
+      }
+    }
+
+    // Attach active permissions to each user
+    const usersWithPermissions = rows.map((user: any) => {
+      const uId = user.id;
+      const roleName = user.role || "";
+      const basePerms = rolePermsMap[roleName] || [];
+      const overrides = userOverridesMap[uId] || { allow: [], deny: [] };
+
+      // combine
+      const activePermSet = new Set<string>(basePerms);
+      overrides.allow.forEach(p => activePermSet.add(p));
+      overrides.deny.forEach(p => activePermSet.delete(p));
+
+      // sensible fallback for super admin
+      if (activePermSet.size === 0 && user.username === "super_admin") {
+        const defaultSuperPerms = [
+          "LOCK_USER", "UNLOCK_USER", "DELETE_USER", "RESTORE_USER",
+          "EXPORT_USERS", "IMPORT_USERS", "RESET_PASSWORD",
+          "VIEW_USER_DETAILS", "UPDATE_USER", "FORCE_PASSWORD_CHANGE", "VIEW_USER_LIST"
+        ];
+        defaultSuperPerms.forEach(p => activePermSet.add(p));
+      }
+
+      return {
+        ...user,
+        permissions: Array.from(activePermSet)
+      };
+    });
+
     // Fetch actual regions from reference_data table in the database
     let regions: string[] = ["Central", "Chobe", "Gantsi", "Kgalagadi", "Kgatleng", "Kweneng", "North East", "North West", "South", "South East"];
     try {
@@ -147,7 +237,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       success: true,
       db_status: "online",
-      users: rows,
+      users: usersWithPermissions,
       regions,
       pagination: {
         page,

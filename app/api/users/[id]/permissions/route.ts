@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDbPool, initializeDatabase, detectUsersSchema } from "@/lib/db";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await props.params;

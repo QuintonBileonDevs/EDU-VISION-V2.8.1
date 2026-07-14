@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDbPool, initializeDatabase } from "@/lib/db";
+import { getDbPool, initializeDatabase, detectUsersSchema } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -7,6 +7,8 @@ export async function GET(req: NextRequest) {
   try {
     await initializeDatabase();
     const db = getDbPool();
+    const schema = await detectUsersSchema();
+    const userCol = schema === "legacy" ? "user_id" : "id";
     
     const searchParams = req.nextUrl.searchParams;
     const limit = parseInt(searchParams.get("limit") || "50");
@@ -31,7 +33,7 @@ export async function GET(req: NextRequest) {
         COALESCE(mh.notes, mh.reason, '') AS notes,
         mh.created_at
       FROM maintenance_history mh
-      LEFT JOIN users u ON mh.triggered_by_user_id = u.id
+      LEFT JOIN users u ON mh.triggered_by_user_id = u.${userCol}
       WHERE 1=1
     `;
     const params: any[] = [];

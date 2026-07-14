@@ -105,51 +105,6 @@ export async function initializeDatabase() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
-  // Alter users table to add region column if missing (legacy schema support)
-  try {
-    const [columns]: any = await db.query("DESCRIBE `users`");
-    const hasRegionCol = columns.some((col: any) => col.Field === "region");
-    if (!hasRegionCol) {
-      console.log("Altering users table to add region column...");
-      await db.query("ALTER TABLE `users` ADD COLUMN `region` VARCHAR(100) DEFAULT 'All'");
-    }
-  } catch (err) {
-    console.error("Error adding region column to users:", err);
-  }
-
-  // Create roles table
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS \`roles\` (
-      \`role_id\` INT AUTO_INCREMENT PRIMARY KEY,
-      \`role_name\` VARCHAR(100) UNIQUE NOT NULL,
-      \`role_display_name\` VARCHAR(100) NOT NULL,
-      \`role_description\` VARCHAR(255),
-      \`is_system\` TINYINT(1) DEFAULT 0,
-      \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      \`deleted_at\` TIMESTAMP NULL
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-  `);
-
-  // Seed default roles if table is empty
-  try {
-    const [roleCountRows]: any = await db.query("SELECT COUNT(*) as count FROM `roles` WHERE deleted_at IS NULL");
-    if (roleCountRows[0]?.count === 0) {
-      const defaultRoles = [
-        ["super_admin", "Super Admin", "Full system access and control", 1],
-        ["region_admin", "Region Admin", "Access and control of schools in region", 1],
-        ["subregion_admin", "Subregion Admin", "Access and control of schools in sub-region", 1],
-        ["school_head", "School Head", "Head of school access and control", 1],
-        ["school_admin", "School Admin", "Administrative school operations", 1],
-        ["data_entry_clerk", "Data Entry Clerk", "School data records entry clerk", 1],
-        ["education_officer", "Education Officer", "Educational statistics and reporting", 1],
-        ["report_viewer", "Report Viewer", "Read-only reporting and statistics access", 1]
-      ];
-      await db.query("INSERT INTO `roles` (`role_name`, `role_display_name`, `role_description`, `is_system`) VALUES ?", [defaultRoles]);
-    }
-  } catch (rolesErr) {
-    console.error("Error seeding roles:", rolesErr);
-  }
-
   // Create permissions table
   await db.query(`
     CREATE TABLE IF NOT EXISTS \`permissions\` (
@@ -167,20 +122,19 @@ export async function initializeDatabase() {
       \`role_permission_id\` INT AUTO_INCREMENT PRIMARY KEY,
       \`role\` VARCHAR(100) NOT NULL,
       \`permission_id\` INT NOT NULL,
-      \`role_id\` INT NULL,
       \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       \`deleted_at\` TIMESTAMP NULL,
       FOREIGN KEY (\`permission_id\`) REFERENCES \`permissions\` (\`permission_id\`) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
-  // Create user_permissions table for user-specific overrides
+  // Create user_permissions table
   await db.query(`
     CREATE TABLE IF NOT EXISTS \`user_permissions\` (
       \`user_permission_id\` INT AUTO_INCREMENT PRIMARY KEY,
       \`user_id\` INT NOT NULL,
       \`permission_id\` INT NOT NULL,
-      \`override_type\` VARCHAR(20) NOT NULL, -- 'allow' or 'deny'
+      \`override_type\` VARCHAR(20) NOT NULL, -- 'allow', 'deny'
       \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       \`deleted_at\` TIMESTAMP NULL,
       FOREIGN KEY (\`permission_id\`) REFERENCES \`permissions\` (\`permission_id\`) ON DELETE CASCADE

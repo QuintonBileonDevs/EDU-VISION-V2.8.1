@@ -28,6 +28,7 @@ import {
   Settings,
   UserPlus
 } from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
 import { usePermissions } from "@/hooks/usePermissions";
 
 // Interfaces
@@ -44,6 +45,7 @@ interface UserRecord {
   last_login?: string;
   created_at?: string;
   deleted_at?: string | null;
+  permissions?: string[];
 }
 
 interface UsersTableProps {
@@ -96,13 +98,11 @@ export default function UsersTable({
     user: UserRecord | null;
   }>({ isOpen: false, user: null });
 
-  const [viewModal, setViewModal] = useState<{
-    isOpen: boolean;
-    user: UserRecord | null;
-  }>({ isOpen: false, user: null });
-
   const [editPermissions, setEditPermissions] = useState<string[]>([]);
   const [loadingEditPermissions, setLoadingEditPermissions] = useState(false);
+  const [showPermissionsPanel, setShowPermissionsPanel] = useState(false);
+  const [isSavingUser, setIsSavingUser] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
 
   useEffect(() => {
     if (editModal.isOpen && editModal.user) {
@@ -123,8 +123,15 @@ export default function UsersTable({
       fetchUserPerms();
     } else {
       setEditPermissions([]);
+      setShowPermissionsPanel(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editModal.isOpen, editModal.user?.id]);
+
+  const [viewModal, setViewModal] = useState<{
+    isOpen: boolean;
+    user: UserRecord | null;
+  }>({ isOpen: false, user: null });
 
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [importText, setImportText] = useState("");
@@ -409,6 +416,8 @@ export default function UsersTable({
     if (!editModal.user) return;
 
     try {
+      setIsSavingUser(true);
+      setSaveSuccess(false);
       const res = await fetch(`/api/users/${editModal.user.id}`, {
         method: "PUT",
         headers: {
@@ -427,13 +436,20 @@ export default function UsersTable({
       });
       const data = await res.json();
       if (data.success) {
-        setEditModal({ isOpen: false, user: null });
-        fetchUsers();
+        setSaveSuccess(true);
+        setTimeout(() => {
+          setEditModal({ isOpen: false, user: null });
+          setSaveSuccess(false);
+          fetchUsers();
+        }, 1200);
       } else {
         alert(data.error || "Failed to update account details");
       }
     } catch (err) {
       console.error("Save edit user error:", err);
+      alert("A system error occurred while saving. Please try again.");
+    } finally {
+      setIsSavingUser(false);
     }
   };
 
@@ -1000,19 +1016,26 @@ export default function UsersTable({
                             </span>
                           </div>
                           <div className="flex flex-wrap gap-1 max-w-[240px]">
-                            {(rolePermissions[sysUser.role] || []).slice(0, 3).map((p: string) => (
-                              <span
-                                key={p}
-                                className="text-[9px] font-medium bg-blue-50/50 dark:bg-blue-950/20 text-blue-600 dark:text-blue-400 border border-blue-100/20 dark:border-blue-900/20 px-1 rounded-sm"
-                              >
-                                {p.split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ")}
-                              </span>
-                            ))}
-                            {(rolePermissions[sysUser.role] || []).length > 3 && (
-                              <span className="text-[9px] text-slate-400 font-medium">
-                                +{(rolePermissions[sysUser.role] || []).length - 3} more
-                              </span>
-                            )}
+                            {(() => {
+                              const activePerms = sysUser.permissions || rolePermissions[sysUser.role] || [];
+                              return (
+                                <>
+                                  {activePerms.slice(0, 3).map((p: string) => (
+                                    <span
+                                      key={p}
+                                      className="text-[9px] font-medium bg-blue-50/50 dark:bg-blue-950/20 text-blue-600 dark:text-blue-400 border border-blue-100/20 dark:border-blue-900/20 px-1 rounded-sm"
+                                    >
+                                      {p.split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ")}
+                                    </span>
+                                  ))}
+                                  {activePerms.length > 3 && (
+                                    <span className="text-[9px] text-slate-400 font-medium">
+                                      +{activePerms.length - 3} more
+                                    </span>
+                                  )}
+                                </>
+                              );
+                            })()}
                           </div>
                         </div>
                       </td>
@@ -1388,23 +1411,35 @@ export default function UsersTable({
               </div>
             </div>
 
-            {availablePermissions.length > 0 && (
-              <div className="pt-3 border-t border-slate-100 dark:border-slate-800/80 mt-2">
+            {/* Manage Permissions Toggle */}
+            <div className="pt-2.5 border-t border-slate-100 dark:border-slate-800/80">
+              <button
+                type="button"
+                onClick={() => setShowPermissionsPanel(!showPermissionsPanel)}
+                className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-705 text-slate-700 dark:text-slate-300 rounded-lg font-semibold transition cursor-pointer"
+              >
+                <Settings className="h-3.5 w-3.5 animate-spin-hover" />
+                {showPermissionsPanel ? "Hide Granular Permissions" : "Manage Permissions Overrides"}
+              </button>
+            </div>
+
+            {showPermissionsPanel && availablePermissions.length > 0 && (
+              <div className="pt-3 border-t border-slate-100 dark:border-slate-800/40 mt-1">
                 <div className="flex items-center justify-between mb-2">
-                  <label className="block font-semibold text-slate-600 dark:text-slate-400 text-xs">
+                  <label className="block font-semibold text-slate-600 dark:text-slate-400 text-[11px]">
                     Granular Permission Overrides
                   </label>
-                  <span className="text-[10px] text-slate-400">
-                    Add or reduce permissions for this specific user
+                  <span className="text-[10px] text-slate-400 dark:text-slate-500">
+                    Add or remove capabilities specifically for this user
                   </span>
                 </div>
                 {loadingEditPermissions ? (
                   <div className="py-4 text-center text-slate-400 flex items-center justify-center gap-1.5">
-                    <RefreshCw className="h-3 w-3 animate-spin text-blue-500" />
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin text-blue-500" />
                     <span>Loading permissions...</span>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto p-2 bg-slate-50 dark:bg-slate-950/30 border border-slate-100 dark:border-slate-800/80 rounded-xl">
+                  <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto p-2.5 bg-slate-50 dark:bg-slate-950/30 border border-slate-100 dark:border-slate-800/80 rounded-xl">
                     {availablePermissions.map(p => {
                       const isChecked = editPermissions.includes(p.permission_name);
                       return (
@@ -1419,13 +1454,13 @@ export default function UsersTable({
                                 setEditPermissions(prev => prev.filter(n => n !== p.permission_name));
                               }
                             }}
-                            className="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                            className="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                           />
-                          <div className="flex flex-col">
-                            <span className="text-slate-700 dark:text-slate-300 font-medium group-hover:text-blue-600 transition-colors">
+                          <div className="flex flex-col text-[10px]">
+                            <span className="text-slate-700 dark:text-slate-300 font-semibold group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors leading-tight">
                               {p.permission_name.replace(/_/g, " ")}
                             </span>
-                            <span className="text-[9px] text-slate-400 leading-tight">
+                            <span className="text-[9px] text-slate-400 dark:text-slate-500 leading-tight">
                               {p.permission_description || "System capability"}
                             </span>
                           </div>
@@ -1440,16 +1475,36 @@ export default function UsersTable({
             <div className="flex justify-end gap-2 border-t border-slate-100 dark:border-slate-800/80 pt-4 mt-2">
               <button
                 type="button"
+                disabled={isSavingUser}
                 onClick={() => setEditModal({ isOpen: false, user: null })}
-                className="px-3.5 py-1.5 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg cursor-pointer font-semibold"
+                className="px-3.5 py-1.5 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg cursor-pointer font-semibold disabled:opacity-50 disabled:cursor-not-allowed transition"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg cursor-pointer shadow-sm shadow-blue-600/10"
+                disabled={isSavingUser || saveSuccess}
+                className={`px-4 py-1.5 font-semibold rounded-lg shadow-sm transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer ${
+                  saveSuccess
+                    ? "bg-emerald-600 text-white shadow-emerald-600/10 scale-95"
+                    : isSavingUser
+                    ? "bg-blue-600/75 text-white/95 cursor-not-allowed"
+                    : "bg-blue-600 hover:bg-blue-700 text-white hover:shadow-md active:scale-98 shadow-blue-600/10"
+                }`}
               >
-                Save Changes
+                {saveSuccess ? (
+                  <>
+                    <CheckCircle className="h-4 w-4 animate-bounce shrink-0" />
+                    <span>Saved Successfully!</span>
+                  </>
+                ) : isSavingUser ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 animate-spin shrink-0" />
+                    <span>Saving Changes...</span>
+                  </>
+                ) : (
+                  <span>Save Changes</span>
+                )}
               </button>
             </div>
           </form>
