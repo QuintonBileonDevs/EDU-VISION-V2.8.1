@@ -13,7 +13,8 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
     if (schema === "legacy") {
       query = `
         SELECT u.user_id AS id, u.username, u.email, u.full_name, u.phone_number, 
-               r.role_name AS role, r.role_display_name, u.is_active, u.created_at, u.deleted_at
+               r.role_name AS role, r.role_display_name, u.is_active, u.created_at, u.deleted_at,
+               COALESCE(u.region, 'All') AS region
         FROM \`users\` u
         LEFT JOIN \`roles\` r ON u.role_id = r.role_id
         WHERE u.user_id = ?
@@ -42,7 +43,7 @@ export async function PUT(req: NextRequest, props: { params: Promise<{ id: strin
   try {
     const { id } = await props.params;
     const body = await req.json();
-    const { username, email, full_name, role, status, region, phone_number } = body;
+    const { username, email, full_name, role, status, region, phone_number, permissions } = body;
 
     const currentUserId = parseInt(req.headers.get("x-user-id") || "1", 10);
 
@@ -124,6 +125,73 @@ export async function PUT(req: NextRequest, props: { params: Promise<{ id: strin
         oldData,
         { ...oldData, ...body }
       );
+    }
+
+    // Save user-specific permissions overrides if specified
+    if (permissions !== undefined && Array.isArray(permissions)) {
+      try {
+        let finalRole = role;
+        if (finalRole === undefined) {
+          if (schema === "legacy") {
+            const [roleRows]: any = await db.query("SELECT role_name FROM `roles` WHERE `role_id` = ?", [oldData.role_id]);
+            finalRole = roleRows[0]?.role_name || "";
+          } else {
+            finalRole = oldData.role;
+          }
+        }
+
+        let defaultPermsQuery = "";
+        let defaultPermsParams: any[] = [];
+        if (schema === "legacy") {
+          defaultPermsQuery = `
+            SELECT DISTINCT p.permission_name
+            FROM \`role_permissions\` rp
+            JOIN \`permissions\` p ON rp.permission_id = p.permission_id
+            JOIN \`roles\` r ON rp.role_id = r.role_id
+            WHERE r.role_name = ? AND rp.deleted_at IS NULL AND p.deleted_at IS NULL
+          `;
+          defaultPermsParams = [finalRole];
+        } else {
+          defaultPermsQuery = `
+            SELECT DISTINCT p.permission_name
+            FROM \`role_permissions\` rp
+            JOIN \`permissions\` p ON rp.permission_id = p.permission_id
+            WHERE rp.role = ? AND rp.deleted_at IS NULL AND p.deleted_at IS NULL
+          `;
+          defaultPermsParams = [finalRole];
+        }
+        const [defaultRows]: any = await db.query(defaultPermsQuery, defaultPermsParams);
+        const defaultRolePerms = defaultRows.map((r: any) => r.permission_name);
+
+        const [allPermsRows]: any = await db.query("SELECT permission_id, permission_name FROM `permissions` WHERE deleted_at IS NULL");
+
+        // Clear existing overrides
+        await db.query("DELETE FROM `user_permissions` WHERE `user_id` = ?", [id]);
+
+        // Insert new overrides
+        const overrideInserts: any[] = [];
+        for (const pRow of allPermsRows) {
+          const pName = pRow.permission_name;
+          const pId = pRow.permission_id;
+          const shouldHave = permissions.includes(pName);
+          const roleHas = defaultRolePerms.includes(pName);
+
+          if (shouldHave && !roleHas) {
+            overrideInserts.push([id, pId, "allow"]);
+          } else if (!shouldHave && roleHas) {
+            overrideInserts.push([id, pId, "deny"]);
+          }
+        }
+
+        if (overrideInserts.length > 0) {
+          await db.query(
+            "INSERT INTO `user_permissions` (`user_id`, `permission_id`, `override_type`) VALUES ?",
+            [overrideInserts]
+          );
+        }
+      } catch (permErr) {
+        console.error("Error saving user permissions overrides in PUT:", permErr);
+      }
     }
 
     return NextResponse.json({ success: true, message: "User updated successfully" });

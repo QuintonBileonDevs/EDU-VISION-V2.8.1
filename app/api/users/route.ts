@@ -93,7 +93,7 @@ export async function GET(req: NextRequest) {
       query = `
         SELECT u.user_id AS id, u.username, u.email, u.full_name, u.phone_number,
                r.role_name AS role, r.role_display_name, IF(u.is_active = 1, 'Active', 'Inactive') AS status,
-               u.is_active, 'All' AS region, DATE_FORMAT(u.last_login_at, '%Y-%m-%d %H:%i:%s') as last_login,
+               u.is_active, COALESCE(u.region, 'All') AS region, DATE_FORMAT(u.last_login_at, '%Y-%m-%d %H:%i:%s') as last_login,
                u.created_at, u.deleted_at
         FROM \`users\` u
         LEFT JOIN \`roles\` r ON u.role_id = r.role_id
@@ -171,7 +171,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const { username, email, full_name, role, region, password, status } = await req.json();
+    const { username, email, full_name, role, region, password, status, permissions } = await req.json();
 
     if (!username || !email || !full_name || !role || !password) {
       return NextResponse.json(
@@ -208,6 +208,8 @@ export async function POST(req: NextRequest) {
       
       // Look up role_id dynamically, with static fallback mapping
       let roleId = 8; // fallback to school_admin
+      let cleanRoleName = role;
+      let isNewRole = false;
       try {
         const [roleRows]: any = await db.query("SELECT role_id FROM `roles` WHERE `role_name` = ? AND `deleted_at` IS NULL", [role]);
         if (roleRows && roleRows.length > 0) {
@@ -229,6 +231,7 @@ export async function POST(req: NextRequest) {
             // It is a custom role name and not in the database roles table.
             // Let's dynamically insert it into the roles table to support custom roles in legacy schema!
             const cleanRole = role.trim().toLowerCase().replace(/[^a-z0-9_]/g, "");
+            cleanRoleName = cleanRole;
             if (cleanRole) {
               const displayName = cleanRole
                 .replace(/[_-]/g, " ")
@@ -241,6 +244,7 @@ export async function POST(req: NextRequest) {
                   [cleanRole, displayName, `Custom role for ${displayName}`]
                 );
                 roleId = insertRes.insertId;
+                isNewRole = true;
               } catch (insErr) {
                 console.error("Failed to insert custom role into legacy roles table, falling back to 8:", insErr);
                 roleId = 8;
@@ -253,14 +257,49 @@ export async function POST(req: NextRequest) {
       }
 
       [result] = await db.query(
-        "INSERT INTO `users` (`username`, `password_hash`, `email`, `full_name`, `role_id`, `is_active`) VALUES (?, ?, ?, ?, ?, ?)",
-        [username.trim(), hashed, email.trim(), full_name.trim(), roleId, isActiveVal]
+        "INSERT INTO `users` (`username`, `password_hash`, `email`, `full_name`, `role_id`, `is_active`, `region`) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [username.trim(), hashed, email.trim(), full_name.trim(), roleId, isActiveVal, userRegion]
       );
+      
+      if (isNewRole && permissions && Array.isArray(permissions) && permissions.length > 0) {
+        try {
+          for (const p of permissions) {
+            const [pRows]: any = await db.query("SELECT permission_id FROM `permissions` WHERE permission_name = ?", [p]);
+            if (pRows && pRows.length > 0) {
+              await db.query(
+                "INSERT INTO `role_permissions` (`role`, `permission_id`, `role_id`) VALUES (?, ?, ?)",
+                [cleanRoleName, pRows[0].permission_id, roleId]
+              );
+            }
+          }
+        } catch (permErr) {
+          console.error("Error inserting role permissions for new role:", permErr);
+        }
+      }
     } else {
       [result] = await db.query(
         "INSERT INTO `users` (`username`, `password_hash`, `email`, `full_name`, `role`, `status`, `region`) VALUES (?, ?, ?, ?, ?, ?, ?)",
         [username.trim(), hashed, email.trim(), full_name.trim(), role, userStatus, userRegion]
       );
+      
+      if (permissions && Array.isArray(permissions) && permissions.length > 0) {
+        try {
+          const [rolePerms]: any = await db.query("SELECT role_permission_id FROM `role_permissions` WHERE `role` = ?", [role]);
+          if (!rolePerms || rolePerms.length === 0) {
+            for (const p of permissions) {
+              const [pRows]: any = await db.query("SELECT permission_id FROM `permissions` WHERE permission_name = ?", [p]);
+              if (pRows && pRows.length > 0) {
+                await db.query(
+                  "INSERT INTO `role_permissions` (`role`, `permission_id`) VALUES (?, ?)",
+                  [role, pRows[0].permission_id]
+                );
+              }
+            }
+          }
+        } catch (permErr) {
+          console.error("Error inserting role permissions for non-legacy schema:", permErr);
+        }
+      }
     }
 
     return NextResponse.json({

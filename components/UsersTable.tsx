@@ -101,6 +101,31 @@ export default function UsersTable({
     user: UserRecord | null;
   }>({ isOpen: false, user: null });
 
+  const [editPermissions, setEditPermissions] = useState<string[]>([]);
+  const [loadingEditPermissions, setLoadingEditPermissions] = useState(false);
+
+  useEffect(() => {
+    if (editModal.isOpen && editModal.user) {
+      const fetchUserPerms = async () => {
+        try {
+          setLoadingEditPermissions(true);
+          const res = await fetch(`/api/users/${editModal.user!.id}/permissions`);
+          if (res.ok) {
+            const data = await res.json();
+            setEditPermissions(data.permissions || []);
+          }
+        } catch (err) {
+          console.error("Failed to fetch user-specific permissions:", err);
+        } finally {
+          setLoadingEditPermissions(false);
+        }
+      };
+      fetchUserPerms();
+    } else {
+      setEditPermissions([]);
+    }
+  }, [editModal.isOpen, editModal.user?.id]);
+
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [importText, setImportText] = useState("");
   const [importFeedback, setImportFeedback] = useState<string | null>(null);
@@ -121,6 +146,8 @@ export default function UsersTable({
   const [provisioning, setProvisioning] = useState(false);
   const [isCustomRole, setIsCustomRole] = useState(false);
   const [customRoleText, setCustomRoleText] = useState("");
+  const [availablePermissions, setAvailablePermissions] = useState<{permission_id: number, permission_name: string, permission_description: string}[]>([]);
+  const [selectedPermissions, setSelectedPermissions] = useState<string[]>([]);
 
   useEffect(() => {
     if (availableRoles.length > 0 && !provisionForm.role) {
@@ -130,6 +157,22 @@ export default function UsersTable({
       }));
     }
   }, [availableRoles, provisionForm.role]);
+
+  useEffect(() => {
+    // Fetch available permissions
+    const fetchPermissions = async () => {
+      try {
+        const res = await fetch("/api/permissions");
+        if (res.ok) {
+          const data = await res.json();
+          setAvailablePermissions(data);
+        }
+      } catch (err) {
+        console.error("Failed to fetch permissions:", err);
+      }
+    };
+    fetchPermissions();
+  }, []);
 
   // Active Dropdowns
   const [activeDropdownId, setActiveDropdownId] = useState<number | null>(null);
@@ -378,7 +421,8 @@ export default function UsersTable({
           phone_number: editModal.user.phone_number,
           role: editModal.user.role,
           status: editModal.user.status,
-          region: editModal.user.region
+          region: editModal.user.region,
+          permissions: editPermissions
         })
       });
       const data = await res.json();
@@ -429,7 +473,8 @@ export default function UsersTable({
 
     const payload = {
       ...provisionForm,
-      role: targetRole
+      role: targetRole,
+      permissions: isCustomRole ? selectedPermissions : []
     };
 
     try {
@@ -457,6 +502,7 @@ export default function UsersTable({
         });
         setIsCustomRole(false);
         setCustomRoleText("");
+        setSelectedPermissions([]);
         setTimeout(() => {
           setProvisionModalOpen(false);
           setProvisionSuccess(false);
@@ -1284,12 +1330,15 @@ export default function UsersTable({
                 <label className="block font-semibold text-slate-600 dark:text-slate-400 mb-1">Assigned Role</label>
                 <select
                   value={editModal.user.role}
-                  onChange={(e) =>
+                  onChange={(e) => {
+                    const newRole = e.target.value;
+                    const newRolePerms = rolePermissions[newRole] || [];
+                    setEditPermissions(newRolePerms);
                     setEditModal({
                       isOpen: true,
-                      user: { ...editModal.user!, role: e.target.value }
-                    })
-                  }
+                      user: { ...editModal.user!, role: newRole }
+                    });
+                  }}
                   className="w-full px-3 py-2 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 rounded-lg cursor-pointer"
                 >
                   {availableRoles.map((r) => (
@@ -1338,6 +1387,55 @@ export default function UsersTable({
                 </select>
               </div>
             </div>
+
+            {availablePermissions.length > 0 && (
+              <div className="pt-3 border-t border-slate-100 dark:border-slate-800/80 mt-2">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block font-semibold text-slate-600 dark:text-slate-400 text-xs">
+                    Granular Permission Overrides
+                  </label>
+                  <span className="text-[10px] text-slate-400">
+                    Add or reduce permissions for this specific user
+                  </span>
+                </div>
+                {loadingEditPermissions ? (
+                  <div className="py-4 text-center text-slate-400 flex items-center justify-center gap-1.5">
+                    <RefreshCw className="h-3 w-3 animate-spin text-blue-500" />
+                    <span>Loading permissions...</span>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto p-2 bg-slate-50 dark:bg-slate-950/30 border border-slate-100 dark:border-slate-800/80 rounded-xl">
+                    {availablePermissions.map(p => {
+                      const isChecked = editPermissions.includes(p.permission_name);
+                      return (
+                        <label key={p.permission_id} className="flex items-start gap-2 cursor-pointer group p-1 hover:bg-slate-100/50 dark:hover:bg-slate-800/30 rounded">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setEditPermissions(prev => [...prev, p.permission_name]);
+                              } else {
+                                setEditPermissions(prev => prev.filter(n => n !== p.permission_name));
+                              }
+                            }}
+                            className="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                          />
+                          <div className="flex flex-col">
+                            <span className="text-slate-700 dark:text-slate-300 font-medium group-hover:text-blue-600 transition-colors">
+                              {p.permission_name.replace(/_/g, " ")}
+                            </span>
+                            <span className="text-[9px] text-slate-400 leading-tight">
+                              {p.permission_description || "System capability"}
+                            </span>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="flex justify-end gap-2 border-t border-slate-100 dark:border-slate-800/80 pt-4 mt-2">
               <button
@@ -1537,6 +1635,7 @@ export default function UsersTable({
                 setProvisionModalOpen(false);
                 setProvisionError(null);
                 setProvisionSuccess(false);
+                setSelectedPermissions([]);
               }}
               className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded text-slate-400 hover:text-slate-600"
             >
@@ -1702,19 +1801,53 @@ export default function UsersTable({
             </div>
 
             {isCustomRole && (
-              <div className="p-3 bg-slate-50 dark:bg-slate-950/30 border border-slate-100 dark:border-slate-800/80 rounded-xl space-y-1.5 animate-fadeIn">
-                <label className="block font-semibold text-slate-600 dark:text-slate-400">Custom Role Name</label>
-                <input
-                  type="text"
-                  required
-                  value={customRoleText}
-                  onChange={(e) => setCustomRoleText(e.target.value)}
-                  placeholder="e.g. academic_director, support_analyst"
-                  className="w-full px-3 py-2 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
-                <span className="text-[10px] text-slate-400 block leading-normal">
-                  The custom role identifier will be converted to lowercase with underscores (e.g., <b>support_analyst</b>) and dynamically registered.
-                </span>
+              <div className="p-3 bg-slate-50 dark:bg-slate-950/30 border border-slate-100 dark:border-slate-800/80 rounded-xl space-y-3 animate-fadeIn">
+                <div>
+                  <label className="block font-semibold text-slate-600 dark:text-slate-400">Custom Role Name</label>
+                  <input
+                    type="text"
+                    required
+                    value={customRoleText}
+                    onChange={(e) => setCustomRoleText(e.target.value)}
+                    placeholder="e.g. academic_director, support_analyst"
+                    className="w-full px-3 py-2 mt-1 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                  <span className="text-[10px] text-slate-400 block leading-normal mt-1.5">
+                    The custom role identifier will be converted to lowercase with underscores (e.g., <b>support_analyst</b>) and dynamically registered.
+                  </span>
+                </div>
+                
+                {availablePermissions.length > 0 && (
+                  <div className="pt-2 border-t border-slate-200 dark:border-slate-800/80">
+                    <label className="block font-semibold text-slate-600 dark:text-slate-400 mb-2">Assign Permissions</label>
+                    <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto p-1">
+                      {availablePermissions.map(p => (
+                        <label key={p.permission_id} className="flex items-start gap-2 cursor-pointer group">
+                          <input
+                            type="checkbox"
+                            checked={selectedPermissions.includes(p.permission_name)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedPermissions(prev => [...prev, p.permission_name]);
+                              } else {
+                                setSelectedPermissions(prev => prev.filter(n => n !== p.permission_name));
+                              }
+                            }}
+                            className="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                          />
+                          <div className="flex flex-col">
+                            <span className="text-slate-700 dark:text-slate-300 font-medium group-hover:text-blue-600 transition-colors">
+                              {p.permission_name.replace(/_/g, " ")}
+                            </span>
+                            <span className="text-[9px] text-slate-400 leading-tight">
+                              {p.permission_description || "System capability"}
+                            </span>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -1725,6 +1858,7 @@ export default function UsersTable({
                   setProvisionModalOpen(false);
                   setProvisionError(null);
                   setProvisionSuccess(false);
+                  setSelectedPermissions([]);
                 }}
                 className="px-3.5 py-1.5 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg cursor-pointer font-semibold"
                 disabled={provisioning}
