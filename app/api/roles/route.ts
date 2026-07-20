@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDbPool, initializeDatabase } from "@/lib/db";
 
+export const dynamic = "force-dynamic";
+
 // GET /api/roles - Fetch all permissions and role mappings
 export async function GET() {
   try {

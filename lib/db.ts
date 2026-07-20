@@ -180,6 +180,7 @@ export async function initializeDatabase() {
 
     const defaultRolePerms: Record<string, string[]> = {
       super_admin: ["view_all_schools", "manage_all_schools", "view_region_schools", "manage_region_schools", "view_subregion_schools", "manage_subregion_schools", "view_own_school", "manage_own_school", "view_students", "manage_students", "view_staff", "manage_staff", "view_inventory", "manage_inventory", "view_reports", "manage_users", "view_audit_log", "manage_policies"],
+      emis_admin: ["view_all_schools", "manage_all_schools", "view_region_schools", "manage_region_schools", "view_subregion_schools", "manage_subregion_schools", "view_own_school", "manage_own_school", "view_students", "manage_students", "view_staff", "manage_staff", "view_inventory", "manage_inventory", "view_reports", "manage_users", "manage_policies"],
       region_admin: ["view_region_schools", "manage_region_schools", "view_students", "manage_students", "view_staff", "manage_staff", "view_inventory", "manage_inventory", "view_reports"],
       subregion_admin: ["view_subregion_schools", "manage_subregion_schools", "view_students", "manage_students", "view_staff", "manage_staff", "view_inventory", "manage_inventory"],
       school_head: ["view_own_school", "manage_own_school", "view_students", "manage_students", "view_staff", "manage_staff", "view_inventory", "manage_inventory"],
@@ -268,6 +269,34 @@ export async function initializeDatabase() {
       await db.query(
         "INSERT INTO `users` (`username`, `password_hash`, `email`, `full_name`, `role`, `status`, `region`) VALUES (?, ?, ?, ?, ?, ?, ?)",
         ["school_head", sha256("school123"), "schoolhead@schoolgov.com", "School Head (Mogoditshane)", "school_head", "Active", "South"]
+      );
+    }
+  }
+
+  // Handle emis_admin upsert/update
+  const [emisAdminRows]: any = await db.query(
+    schema === "legacy"
+      ? "SELECT user_id AS id FROM `users` WHERE username = 'emis_admin'"
+      : "SELECT id FROM `users` WHERE username = 'emis_admin'"
+  );
+
+  if (emisAdminRows && emisAdminRows.length > 0) {
+    console.log("Updating existing emis_admin password to match emis123...");
+    await db.query(
+      "UPDATE `users` SET `password_hash` = ? WHERE `username` = 'emis_admin'",
+      [sha256("emis123")]
+    );
+  } else {
+    console.log("Inserting emis_admin...");
+    if (schema === "legacy") {
+      await db.query(
+        "INSERT INTO `users` (`username`, `password_hash`, `email`, `full_name`, `role_id`, `is_active`) VALUES (?, ?, ?, ?, ?, ?)",
+        ["emis_admin", sha256("emis123"), "emisadmin@schoolgov.com", "EMIS System Administrator", 2, 1]
+      );
+    } else {
+      await db.query(
+        "INSERT INTO `users` (`username`, `password_hash`, `email`, `full_name`, `role`, `status`, `region`) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ["emis_admin", sha256("emis123"), "emisadmin@schoolgov.com", "EMIS System Administrator", "emis_admin", "Active", "All"]
       );
     }
   }

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDbPool, initializeDatabase } from "@/lib/db";
 
+export const dynamic = "force-dynamic";
+
 // GET: Fetch records
 export async function GET(req: NextRequest) {
   try {

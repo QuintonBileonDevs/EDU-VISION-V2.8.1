@@ -147,6 +147,7 @@ export default function Page() {
   // Dynamic user roles list managed from database entries
   const [availableRoles, setAvailableRoles] = useState<string[]>([
     "super_admin",
+    "emis_admin",
     "region_admin",
     "subregion_admin",
     "school_head",
@@ -159,11 +160,36 @@ export default function Page() {
   // Role Permissions State Management (Initialized with database defaults, synced dynamically)
   const [rolePermissions, setRolePermissions] = useState<Record<string, string[]>>({
     super_admin: ["view_all_schools", "manage_all_schools", "view_region_schools", "manage_region_schools", "view_subregion_schools", "manage_subregion_schools", "view_own_school", "manage_own_school", "view_students", "manage_students", "view_staff", "manage_staff", "view_inventory", "manage_inventory", "view_reports", "manage_users", "view_audit_log", "manage_policies"],
+    emis_admin: ["view_all_schools", "manage_all_schools", "view_region_schools", "manage_region_schools", "view_subregion_schools", "manage_subregion_schools", "view_own_school", "manage_own_school", "view_students", "manage_students", "view_staff", "manage_staff", "view_inventory", "manage_inventory", "view_reports", "manage_users", "manage_policies"],
     region_admin: ["view_region_schools", "manage_region_schools", "view_students", "manage_students", "view_staff", "manage_staff", "view_inventory", "manage_inventory", "view_reports"],
     subregion_admin: ["view_subregion_schools", "manage_subregion_schools", "view_students", "manage_students", "view_staff", "manage_staff", "view_inventory", "manage_inventory"],
     school_head: ["view_own_school", "manage_own_school", "view_students", "manage_students", "view_staff", "manage_staff", "view_inventory", "manage_inventory"],
     school_admin: ["view_own_school", "view_students", "manage_students", "view_staff", "manage_staff", "view_inventory", "view_reports"]
   });
+
+  const isAdministrator = user?.role === "super_admin" || user?.role === "emis_admin";
+
+  const adminTabs = React.useMemo(() => {
+    if (!user) return [];
+    const baseTabs = [
+      { id: "insights", label: "National EMIS Insights", icon: Activity },
+      { id: "users", label: "User & Access Management", icon: Users },
+      { id: "config", label: "System Configuration", icon: Settings },
+      { id: "data", label: "Data Management", icon: Database },
+      { id: "reference", label: "Reference Data Management", icon: FileText },
+      { id: "academic", label: "Academic Management", icon: GraduationCap },
+      { id: "regions", label: "School & Region Management", icon: Map },
+      { id: "security", label: "Security & Monitoring", icon: ShieldAlert },
+      { id: "health", label: "System Health", icon: ActivitySquare }
+    ];
+    if (user.role === "super_admin") {
+      return baseTabs;
+    } else if (user.role === "emis_admin") {
+      // Remove "data" (Data Management) tab for EMIS Admin
+      return baseTabs.filter(tab => tab.id !== "data");
+    }
+    return [];
+  }, [user]);
 
   // Dynamic user regions list managed from database entries
   const [availableRegions, setAvailableRegions] = useState<string[]>([
@@ -262,6 +288,16 @@ export default function Page() {
       console.error("Error fetching role permissions:", e);
     }
   }, [dbStatus]);
+
+  // Tab access control/redirection for EMIS system administrator
+  useEffect(() => {
+    if (user && isAdministrator) {
+      const allowedTabIds = adminTabs.map(t => t.id);
+      if (!allowedTabIds.includes(superTab as any)) {
+        setSuperTab(allowedTabIds[0] as any);
+      }
+    }
+  }, [user, isAdministrator, adminTabs, superTab]);
 
   // Handle Authentication Submission
   const handleLogin = async (e: React.FormEvent) => {
@@ -431,12 +467,12 @@ export default function Page() {
   useEffect(() => {
     if (dbStatus === "online" && user) {
       fetchRecords();
-      if (user.role === "super_admin") {
+      if (isAdministrator) {
         fetchSystemUsers();
       }
       fetchRolePermissions();
     }
-  }, [activeTab, dbStatus, user, fetchRecords, fetchSystemUsers, fetchRolePermissions]);
+  }, [activeTab, dbStatus, user, fetchRecords, fetchSystemUsers, fetchRolePermissions, isAdministrator]);
 
   // Set default form values when tab changes
   useEffect(() => {
@@ -800,21 +836,11 @@ export default function Page() {
         </button>
       </div>
 
-      {/* Super Admin Tab Selector */}
-      {user.role === "super_admin" && (
+      {/* Administrative Tab Selector */}
+      {isAdministrator && (
         <div className="bg-slate-100 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-850 px-6 py-2.5 flex flex-wrap items-center justify-between gap-4 transition-colors duration-300">
           <div className="flex flex-wrap gap-1.5">
-            {[
-              { id: "insights", label: "National EMIS Insights", icon: Activity },
-              { id: "users", label: "User & Access Management", icon: Users },
-              { id: "config", label: "System Configuration", icon: Settings },
-              { id: "data", label: "Data Management", icon: Database },
-              { id: "reference", label: "Reference Data Management", icon: FileText },
-              { id: "academic", label: "Academic Management", icon: GraduationCap },
-              { id: "regions", label: "School & Region Management", icon: Map },
-              { id: "security", label: "Security & Monitoring", icon: ShieldAlert },
-              { id: "health", label: "System Health", icon: ActivitySquare }
-            ].map((tab) => {
+            {adminTabs.map((tab) => {
               const Icon = tab.icon;
               const isSelected = superTab === tab.id;
               return (
@@ -835,13 +861,13 @@ export default function Page() {
           </div>
           <div className="text-[10px] text-slate-500 dark:text-slate-400 font-semibold font-mono flex items-center gap-1">
             <ShieldCheck className="h-4 w-4 text-emerald-600 shrink-0" />
-            Active Super Admin Session
+            {user.role === "super_admin" ? "Active Super Admin Session" : "Active EMIS Admin Session"}
           </div>
         </div>
       )}
 
       {/* Primary Dashboard Content Area */}
-      {user.role !== "super_admin" ? (
+      {!isAdministrator ? (
         <main className="flex-1 max-w-7xl w-full mx-auto p-6 grid grid-cols-1 lg:grid-cols-4 gap-6">
           {/* Navigation / Registry Selection sidebar */}
           <div className="lg:col-span-1 space-y-4">
@@ -1354,7 +1380,7 @@ export default function Page() {
           )}
 
           {superTab === "config" && <SuperAdminConfig />}
-          {superTab === "data" && <SuperAdminData />}
+          {superTab === "data" && user?.role === "super_admin" && <SuperAdminData />}
           {superTab === "reference" && <SuperAdminReference />}
           {superTab === "academic" && <SuperAdminAcademic />}
           {superTab === "regions" && <SuperAdminRegions />}
